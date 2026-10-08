@@ -11,6 +11,7 @@ param(
     [int]$Frames = 121,
     [string]$Size = "1280*704",
     [int]$VaeTile = 16,
+    [double]$TeaCache = 0,   # 0 = off; 0.04 is a safe speed-up, 0.15 ruins quality
     [string]$CkptDir = ".\Wan2.2-TI2V-5B",
     [switch]$DryRun
 )
@@ -27,6 +28,7 @@ $cmd = @(
     "--convert_model_dtype",
     "--t5_cpu",
     "--vae_tile", $VaeTile,
+    "--teacache_thresh", $TeaCache,
     "--frame_num", $Frames,
     "--sample_steps", $Steps,
     "--save_file", $Out,

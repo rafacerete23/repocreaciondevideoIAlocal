@@ -228,6 +228,12 @@ def _parse_args():
         help="TI2V only: decode the video in overlapping spatial tiles of this "
         "size (latent units, e.g. 16). 0 disables tiling.")
     parser.add_argument(
+        "--teacache_thresh",
+        type=float,
+        default=0.0,
+        help="TI2V only: TeaCache threshold (0 disables). Higher skips more "
+        "denoising steps, faster but lower quality; try 0.05-0.3.")
+    parser.add_argument(
         "--vae_tile_overlap",
         type=int,
         default=4,
@@ -450,6 +456,7 @@ def generate(args):
             convert_model_dtype=args.convert_model_dtype,
             vae_tile=args.vae_tile,
             vae_tile_overlap=args.vae_tile_overlap,
+            teacache_thresh=args.teacache_thresh,
         )
 
         logging.info(f"Generating video ...")

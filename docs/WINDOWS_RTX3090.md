@@ -51,9 +51,25 @@ to 315W with the same speed (25.0 s/step) but only lowered the hot spot to
 103.7C. If the hot spot stays above ~100C, clean the heatsink and repaste the
 core; the memory pads were fine.
 
+## TeaCache (`--teacache_thresh`, off by default)
+
+Skips the DiT blocks on steps whose first-block modulated input barely
+changed and re-applies the cached residual (kept on the CPU, VRAM is full).
+Uncalibrated for the 5B model, so the threshold is on the raw relative L1:
+per-step changes are ~0.02-0.13. 30 steps, same prompt and seed, `--vae_tile 16`:
+
+| threshold | steps run | diffusion | total | quality |
+|---|---|---|---|---|
+| off | 30/30 | 12.5 min | 21.2 min | baseline |
+| 0.04 | 22/30 | 9.5 min | 18.6 min | clean in sampled frames |
+| 0.15 | 10/30 | 4.5 min | 13.6 min | unusable (blurry, smeared) |
+
+0.04 gives ~1.3x on diffusion (-12% total, since load and decode are fixed).
+Do not go to 0.15. One sample per setting; judged by eye.
+
 ## Ideas not done yet
 
-- TeaCache or cache-dit for fewer effective steps (needs quality validation).
+- cache-dit.
 - A 4-step community TI2V-5B distillation (no official lightx2v LoRA exists
   for the 5B model).
 - SageAttention: reported to produce noise on the 5B model.

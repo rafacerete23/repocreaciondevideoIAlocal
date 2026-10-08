@@ -47,6 +47,7 @@ class WanTI2V:
         convert_model_dtype=False,
         vae_tile=0,
         vae_tile_overlap=4,
+        teacache_thresh=0.0,
     ):
         r"""
         Initializes the Wan text-to-video generation model components.
@@ -77,7 +78,10 @@ class WanTI2V:
                 Spatial tile size (latent units) for VAE decoding; 0 disables.
             vae_tile_overlap (`int`, *optional*, defaults to 4):
                 Overlap between VAE tiles, in latent units.
+            teacache_thresh (`float`, *optional*, defaults to 0.0):
+                TeaCache threshold; 0 disables it. Higher skips more steps.
         """
+        self.teacache_thresh = teacache_thresh
         self.device = torch.device(f"cuda:{device_id}")
         self.config = config
         self.rank = rank
@@ -387,6 +391,8 @@ class WanTI2V:
                 self.model.to(self.device)
                 torch.cuda.empty_cache()
 
+            if self.teacache_thresh > 0:
+                self.model.enable_teacache(self.teacache_thresh, len(timesteps))
             for _, t in enumerate(tqdm(timesteps)):
                 latent_model_input = latents
                 timestep = [t]
@@ -594,6 +600,8 @@ class WanTI2V:
                 self.model.to(self.device)
                 torch.cuda.empty_cache()
 
+            if self.teacache_thresh > 0:
+                self.model.enable_teacache(self.teacache_thresh, len(timesteps))
             for _, t in enumerate(tqdm(timesteps)):
                 latent_model_input = [latent.to(self.device)]
                 timestep = [t]

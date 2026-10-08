@@ -1,4 +1,5 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
+import logging
 import math
 
 import torch
@@ -486,8 +487,11 @@ class WanModel(ModelMixin, ConfigMixin):
             context=context,
             context_lens=context_lens)
 
-        for block in self.blocks:
-            x = block(x, **kwargs)
+        if getattr(self, '_tc', None) is None:
+            for block in self.blocks:
+                x = block(x, **kwargs)
+        else:
+            x = self._teacache_blocks(x, e0, kwargs)
 
         # head
         x = self.head(x, e)
@@ -495,6 +499,73 @@ class WanModel(ModelMixin, ConfigMixin):
         # unpatchify
         x = self.unpatchify(x, grid_sizes)
         return [u.float() for u in x]
+
+    def enable_teacache(self, threshold, num_steps, warmup=2):
+        """Skip the transformer blocks on steps whose input barely changed.
+
+        Assumes the sampling loop calls the model once for the conditional and
+        once for the unconditional branch on every step, in that order.
+        Each branch keeps its own accumulated relative-L1 change of the first
+        block's modulated input; once it passes `threshold` the blocks run and
+        their residual is cached, otherwise the cached residual is re-applied.
+        The first `warmup` steps and the last step always run.
+        """
+        self._tc = dict(
+            threshold=float(threshold),
+            num_steps=int(num_steps),
+            warmup=int(warmup),
+            calls=0,
+            branches={})
+
+    def disable_teacache(self):
+        self._tc = None
+
+    def _teacache_blocks(self, x, e0, kwargs):
+        tc = self._tc
+        branch = tc['calls'] % 2
+        step = tc['calls'] // 2
+        tc['calls'] += 1
+        st = tc['branches'].setdefault(
+            branch, dict(prev=None, accum=0.0, residual=None, ran=0, skipped=0))
+
+        # Signal: modulated input of block 0, on a token subsample (cheap).
+        blk = self.blocks[0]
+        with torch.amp.autocast('cuda', dtype=torch.float32):
+            em = (blk.modulation.unsqueeze(0) + e0[:, ::16]).chunk(6, dim=2)
+            mod = (blk.norm1(x[:, ::16]).float() * (1 + em[1].squeeze(2)) +
+                   em[0].squeeze(2))
+
+        last = step >= tc['num_steps'] - 1
+        if (st['prev'] is None or st['residual'] is None or
+                step < tc['warmup'] or last):
+            run = True
+        else:
+            rel = ((mod - st['prev']).abs().mean() /
+                   st['prev'].abs().mean().clamp(min=1e-8)).item()
+            st['accum'] += rel
+            st.setdefault('rels', []).append(round(rel, 4))
+            run = st['accum'] >= tc['threshold']
+        st['prev'] = mod
+
+        if run:
+            st['accum'] = 0.0
+            st['ran'] += 1
+            before = x.cpu()
+            for block in self.blocks:
+                x = block(x, **kwargs)
+            # The residual lives on the CPU: VRAM is already at its limit.
+            st['residual'] = x.cpu() - before
+            del before
+        else:
+            st['skipped'] += 1
+            x = x + st['residual'].to(x.device)
+
+        if last:
+            logging.info('TeaCache branch %d: ran %d / skipped %d of %d steps',
+                         branch, st['ran'], st['skipped'], tc['num_steps'])
+            logging.info('TeaCache branch %d rel-L1 per step: %s', branch,
+                         st.get('rels'))
+        return x
 
     def unpatchify(self, x, grid_sizes):
         r"""
