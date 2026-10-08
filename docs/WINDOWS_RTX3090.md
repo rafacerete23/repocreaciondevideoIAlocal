@@ -35,6 +35,14 @@ This runs `generate.py --task ti2v-5B --size 1280*704 --offload_model True
 Load ~4 min, diffusion 21 min (25.2 s/step), decode+save 8 min without
 `--vae_tile`. Peak VRAM 24.2GB, so nothing else should use the GPU.
 
+## 30 vs 50 steps (same prompt and seed, 121 frames, `--vae_tile 16`)
+
+30 steps: 21 min total (diffusion 12.5 min). 50 steps (no tiling): ~33 min.
+Both videos are coherent, but in sampled frames the 30-step one had more
+anatomy artifacts (a white blob where a cat's head should be, boot-like feet);
+the 50-step one was cleaner. One sample each, so not conclusive. Use 30 for
+drafts and 50 for finals.
+
 ## Thermals
 
 At full load the card hit 88.6C core / 105.5C hot spot / 82C memory junction.
