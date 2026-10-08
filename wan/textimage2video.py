@@ -45,6 +45,8 @@ class WanTI2V:
         t5_cpu=False,
         init_on_cpu=True,
         convert_model_dtype=False,
+        vae_tile=0,
+        vae_tile_overlap=4,
     ):
         r"""
         Initializes the Wan text-to-video generation model components.
@@ -71,6 +73,10 @@ class WanTI2V:
             convert_model_dtype (`bool`, *optional*, defaults to False):
                 Convert DiT model parameters dtype to 'config.param_dtype'.
                 Only works without FSDP.
+            vae_tile (`int`, *optional*, defaults to 0):
+                Spatial tile size (latent units) for VAE decoding; 0 disables.
+            vae_tile_overlap (`int`, *optional*, defaults to 4):
+                Overlap between VAE tiles, in latent units.
         """
         self.device = torch.device(f"cuda:{device_id}")
         self.config = config
@@ -85,22 +91,32 @@ class WanTI2V:
             self.init_on_cpu = False
 
         shard_fn = partial(shard_model, device_id=device_id)
-        self.text_encoder = T5EncoderModel(
+
+        # T5 first: its temporary state dict (~11GB) is freed before the DiT
+        # loads, which keeps peak committed memory ~10GB lower than the
+        # reverse order (matters on Windows, where allocations fail once
+        # RAM + pagefile commit is exhausted).
+        self._t5_kwargs = dict(
             text_len=config.text_len,
             dtype=config.t5_dtype,
             device=torch.device('cpu'),
             checkpoint_path=os.path.join(checkpoint_dir, config.t5_checkpoint),
             tokenizer_path=os.path.join(checkpoint_dir, config.t5_tokenizer),
             shard_fn=shard_fn if t5_fsdp else None)
+        self.text_encoder = T5EncoderModel(**self._t5_kwargs)
 
         self.vae_stride = config.vae_stride
         self.patch_size = config.patch_size
         self.vae = Wan2_2_VAE(
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
             device=self.device)
+        if vae_tile and vae_tile > 0:
+            self.vae.enable_tiling(vae_tile, vae_tile_overlap)
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained(checkpoint_dir)
+        self.model = WanModel.from_pretrained(
+            checkpoint_dir,
+            torch_dtype=self.param_dtype if convert_model_dtype else None)
         self.model = self._configure_model(
             model=self.model,
             use_sp=use_sp,
@@ -152,8 +168,8 @@ class WanTI2V:
         if dit_fsdp:
             model = shard_fn(model)
         else:
-            if convert_model_dtype:
-                model.to(self.param_dtype)
+            # dtype conversion already happened in from_pretrained(torch_dtype=...)
+            # above; converting in-place here can crash on mmap'd safetensors.
             if not self.init_on_cpu:
                 model.to(self.device)
 
@@ -296,6 +312,8 @@ class WanTI2V:
         seed_g = torch.Generator(device=self.device)
         seed_g.manual_seed(seed)
 
+        if self.text_encoder is None:
+            self.text_encoder = T5EncoderModel(**self._t5_kwargs)
         if not self.t5_cpu:
             self.text_encoder.model.to(self.device)
             context = self.text_encoder([input_prompt], self.device)
@@ -307,6 +325,11 @@ class WanTI2V:
             context_null = self.text_encoder([n_prompt], torch.device('cpu'))
             context = [t.to(self.device) for t in context]
             context_null = [t.to(self.device) for t in context_null]
+            if offload_model:
+                # Prompts are encoded: drop the ~11GB encoder from RAM; it is
+                # reloaded lazily if generate() is called again.
+                self.text_encoder = None
+                gc.collect()
 
         noise = [
             torch.randn(
@@ -497,6 +520,8 @@ class WanTI2V:
             n_prompt = self.sample_neg_prompt
 
         # preprocess
+        if self.text_encoder is None:
+            self.text_encoder = T5EncoderModel(**self._t5_kwargs)
         if not self.t5_cpu:
             self.text_encoder.model.to(self.device)
             context = self.text_encoder([input_prompt], self.device)
@@ -508,6 +533,11 @@ class WanTI2V:
             context_null = self.text_encoder([n_prompt], torch.device('cpu'))
             context = [t.to(self.device) for t in context]
             context_null = [t.to(self.device) for t in context_null]
+            if offload_model:
+                # Prompts are encoded: drop the ~11GB encoder from RAM; it is
+                # reloaded lazily if generate() is called again.
+                self.text_encoder = None
+                gc.collect()
 
         z = self.vae.encode([img])
 

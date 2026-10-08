@@ -437,9 +437,15 @@ def _t5(name,
     else:
         model_cls = T5Model
 
-    # init model
-    with torch.device(device):
-        model = model_cls(**kwargs)
+    # init model directly in the target dtype: building it in fp32 first
+    # commits ~2x the memory (22GB for umt5-xxl) before the .to() below.
+    prev_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        with torch.device(device):
+            model = model_cls(**kwargs)
+    finally:
+        torch.set_default_dtype(prev_dtype)
 
     # set device
     model = model.to(dtype=dtype, device=device)

@@ -221,6 +221,17 @@ def _parse_args():
         action="store_true",
         default=False,
         help="Whether to convert model paramerters dtype.")
+    parser.add_argument(
+        "--vae_tile",
+        type=int,
+        default=0,
+        help="TI2V only: decode the video in overlapping spatial tiles of this "
+        "size (latent units, e.g. 16). 0 disables tiling.")
+    parser.add_argument(
+        "--vae_tile_overlap",
+        type=int,
+        default=4,
+        help="Overlap between VAE tiles, in latent units.")
 
     # animate
     parser.add_argument(
@@ -437,6 +448,8 @@ def generate(args):
             use_sp=(args.ulysses_size > 1),
             t5_cpu=args.t5_cpu,
             convert_model_dtype=args.convert_model_dtype,
+            vae_tile=args.vae_tile,
+            vae_tile_overlap=args.vae_tile_overlap,
         )
 
         logging.info(f"Generating video ...")

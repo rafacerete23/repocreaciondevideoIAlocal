@@ -5,3 +5,8 @@ tmp_examples*
 new_checkpoint*
 batch_test*
 nohup*
+.env
+*.env.local
+# local model weights and generated videos
+Wan2.2-TI2V-5B/
+*.mp4
