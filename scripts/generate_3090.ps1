@@ -28,7 +28,7 @@ $cmd = @(
     "--convert_model_dtype",
     "--t5_cpu",
     "--vae_tile", $VaeTile,
-    "--teacache_thresh", $TeaCache,
+    "--teacache_thresh", $TeaCache.ToString([System.Globalization.CultureInfo]::InvariantCulture),
     "--frame_num", $Frames,
     "--sample_steps", $Steps,
     "--save_file", $Out,
